@@ -5,3 +5,4 @@ version = 4
 [[package]]
 name = "hello-server"
 version = "0.1.0"
+authors = ["RAHUL DINDIGALA"]
