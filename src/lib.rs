@@ -4,7 +4,7 @@ use std::{sync::{Arc, Mutex, mpsc},
 
 pub struct ThreadPool{
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: Option<mpsc::Sender<Job>>,
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -29,7 +29,7 @@ impl ThreadPool {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
     }
 
-    ThreadPool { workers, sender }
+    ThreadPool { workers, sender :Some(sender) }
 }
 
     pub fn execute<F>(&self, f:F)
@@ -37,7 +37,7 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        self.sender.as_ref().unwrap().send(job).unwrap();
     }
 
     pub fn build(size: usize) -> Result<ThreadPool, std::io::Error> {
@@ -49,6 +49,17 @@ impl ThreadPool {
         }
 
         Ok(ThreadPool::new(size))
+    }
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+
+        for worker in self.workers.drain(..){
+            println!("Shutting down worker {}", worker.id);
+            worker.thread.join().unwrap();
+        }
     }
 }
 
@@ -64,9 +75,18 @@ impl Worker {
         let thread = thread::spawn(move || {
             // using "while let" instead of "loop" can stop other Worker instances receiving jobs. i.e again single thread
            loop {
-            let job = receiver.lock().unwrap().recv().unwrap();
-            println!("Worker {id} got a job; executing.");
-            job();
+            let message = receiver.lock().unwrap().recv();
+
+            match message {
+                Ok(job) => {
+                    println!("Worker {id} got a job; executing.");
+                    job();
+                },
+                Err(_) => {
+                    println!("Worker {id} disconnected; shutting down.");
+                    break;
+                }
+            }
            }
         });
         Worker { id, thread }
